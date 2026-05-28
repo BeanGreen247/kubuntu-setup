@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+kubuntu-setup-*.log
+kubuntu-setup-*.summary
+.env
+*.env
+.secret
+*.secret
+.claude/settings.json
+.claude
