@@ -207,25 +207,56 @@ if [[ "$1" == "--post-login" ]]; then
     info "Applying KDE power profile + display timeout settings..."
     # Ensure power-profiles-daemon is running so the profile switch takes immediate effect
     sudo systemctl enable --now power-profiles-daemon 2>/dev/null || true
-    # Set AC profile via the D-Bus interface (takes effect instantly, survives reboot)
     if command -v powerprofilesctl >/dev/null 2>&1; then
         powerprofilesctl set balanced 2>/dev/null \
             && ok "Active power profile set to: balanced" \
             || warn "powerprofilesctl set failed — will apply via kwriteconfig only"
     fi
     if command -v kwriteconfig6 >/dev/null 2>&1; then
-        # Power profiles
-        kwriteconfig6 --file powermanagementprofilesrc --group AC         --key powerProfile balanced
-        kwriteconfig6 --file powermanagementprofilesrc --group Battery    --key powerProfile balanced
-        kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --key powerProfile power-saver
-        # Screen off: never on AC, 20 min on battery
-        kwriteconfig6 --file powermanagementprofilesrc --group AC      --group DPMSControl --key idleTime 0
-        kwriteconfig6 --file powermanagementprofilesrc --group AC      --group DimDisplay  --key idleTime 0
-        kwriteconfig6 --file powermanagementprofilesrc --group AC      --group SuspendSession --key idleTime 0
-        kwriteconfig6 --file powermanagementprofilesrc --group Battery --group DPMSControl --key idleTime 1200000
-        kwriteconfig6 --file powermanagementprofilesrc --group Battery --group DimDisplay  --key idleTime 900000
-        ok "Power profiles: AC=balanced  Battery=balanced  LowBattery=power-saver"
-        ok "Screen timeout: AC=never  Battery=off@20min (dim@15min)"
+        # Detect whether a battery is present (laptop vs desktop)
+        if ls /sys/class/power_supply/ 2>/dev/null | grep -qE '^BAT'; then
+            # ── Laptop: apply per-tab settings from power management UI ──────────
+            # AC Power: sleep@60min · brightness 100% · dim never · screen off 10min · lock 1min before · Balanced
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group SuspendSession   --key idleTime 3600000
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group SuspendSession   --key suspendType 1
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group HandleButtonEvents --key lidAction 1
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group HandleButtonEvents --key powerButtonAction 12
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group BrightnessControl --key value 100
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group DimDisplay        --key idleTime 0
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group DPMSControl       --key idleTime 600000
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --group DPMSControl       --key lockBeforeScreenOff 60000
+            kwriteconfig6 --file powermanagementprofilesrc --group AC --key powerProfile balanced
+            # On Battery: sleep@15min · brightness 60% · dim@2min · screen off 5min · lock 1min before · Power Save
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group SuspendSession   --key idleTime 900000
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group SuspendSession   --key suspendType 1
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group HandleButtonEvents --key lidAction 1
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group HandleButtonEvents --key powerButtonAction 12
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group BrightnessControl --key value 60
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group DimDisplay        --key idleTime 120000
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group DPMSControl       --key idleTime 300000
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --group DPMSControl       --key lockBeforeScreenOff 60000
+            kwriteconfig6 --file powermanagementprofilesrc --group Battery --key powerProfile power-saver
+            # Low Battery: sleep@5min · brightness 10% · dim@1min · screen off 2min · lock 1min before · Power Save
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group SuspendSession   --key idleTime 300000
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group SuspendSession   --key suspendType 1
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group HandleButtonEvents --key lidAction 1
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group HandleButtonEvents --key powerButtonAction 12
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group BrightnessControl --key value 10
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group DimDisplay        --key idleTime 60000
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group DPMSControl       --key idleTime 120000
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --group DPMSControl       --key lockBeforeScreenOff 60000
+            kwriteconfig6 --file powermanagementprofilesrc --group LowBattery --key powerProfile power-saver
+            ok "Power (laptop): AC=Balanced/sleep@60min  Battery=PowerSave/sleep@15min  LowBattery=PowerSave/sleep@5min"
+        else
+            # ── Desktop: never sleep / never hibernate · Balanced everywhere ─────
+            for _grp in AC Battery LowBattery; do
+                kwriteconfig6 --file powermanagementprofilesrc --group "$_grp" --group SuspendSession --key idleTime 0
+                kwriteconfig6 --file powermanagementprofilesrc --group "$_grp" --group DPMSControl    --key idleTime 0
+                kwriteconfig6 --file powermanagementprofilesrc --group "$_grp" --group DimDisplay     --key idleTime 0
+                kwriteconfig6 --file powermanagementprofilesrc --group "$_grp" --key powerProfile balanced
+            done
+            ok "Power (desktop): never sleep/dim/screen-off · Balanced profile on all tabs"
+        fi
 
         info "Applying KWin compositor performance tweaks (eye candy kept)..."
         # OpenGL Core Profile — best performance on modern Mesa/NVIDIA
