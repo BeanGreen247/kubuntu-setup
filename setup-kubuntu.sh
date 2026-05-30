@@ -1395,6 +1395,7 @@ apt-get install -y \
     software-properties-qt \
     python3 python3-pip python3-venv python3-dev pipx \
     python3-pyqt6 \
+    nodejs \
     zsh \
     libnotify-bin \
     timeshift \
@@ -2076,36 +2077,34 @@ if ! command -v pulsar &>/dev/null; then
     dpkg -i "$_PULSAR_TMP" || apt-get -f install -y
     rm -f "$_PULSAR_TMP"
     ok "Pulsar ${_PULSAR_VER} installed"
-    if command -v pulsar &>/dev/null; then
-        sudo -u "$USER_NAME" pulsar -p install claude-chat \
-            && ok "  claude-chat package installed" \
-            || warn "  claude-chat install failed — run: pulsar -p install claude-chat"
-        # git-plus: command-palette git without any GitHub login prompt
-        sudo -u "$USER_NAME" pulsar -p install git-plus \
-            && ok "  git-plus package installed" \
-            || warn "  git-plus install failed — run: pulsar -p install git-plus"
-        # Disable bundled packages that are unused, dev-only, or hurt performance
-        sudo -u "$USER_NAME" pulsar -p disable \
-            github \
-            open-on-github \
-            metrics \
-            exception-reporting \
-            dev-live-reload \
-            deprecation-cop \
-            autocomplete-atom-api \
-            package-generator \
-            timecop \
-            styleguide \
-            spell-check \
-            welcome \
-            about \
-            background-tips \
-            keybinding-resolver \
-            && ok "  performance/junk packages disabled" \
-            || warn "  some packages could not be disabled — check Settings > Packages"
-    fi
 else
     ok "Pulsar already installed"
+fi
+
+if command -v pulsar &>/dev/null; then
+    # git-plus: command-palette git without any GitHub login prompt
+    sudo -u "$USER_NAME" pulsar -p install git-plus \
+        && ok "  git-plus package installed" \
+        || warn "  git-plus install failed — run: pulsar -p install git-plus"
+    # Disable bundled packages that are unused, dev-only, or hurt performance
+    sudo -u "$USER_NAME" pulsar -p disable \
+        github \
+        open-on-github \
+        metrics \
+        exception-reporting \
+        dev-live-reload \
+        deprecation-cop \
+        autocomplete-atom-api \
+        package-generator \
+        timecop \
+        styleguide \
+        spell-check \
+        welcome \
+        about \
+        background-tips \
+        keybinding-resolver \
+        && ok "  performance/junk packages disabled" \
+        || warn "  some packages could not be disabled — check Settings > Packages"
 fi
 
 # ── Pulsar performance config + launch wrapper ────────────────────────────────
