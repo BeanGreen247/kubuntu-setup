@@ -186,6 +186,7 @@ The **Check for updates** button in the GUI also does an in-process `git fetch` 
 - **Cursor** set to Breeze Dark system-wide (login screen, root apps, Xresources)
 
 ### 4 — Development
+- **Zed** — native, GPU-accelerated editor (official installer → `~/.local/bin/zed`)
 - **VS Code** (Microsoft apt repo)
 - **Docker CE** + compose plugin (docker.com repo, `docker.io` fallback)
 - **Ansible**, **kubectl**, **Azure CLI**
@@ -507,6 +508,8 @@ Find your editor's config below, set `dest` to that path, point `url` at the fil
 |---|---|---|
 | VS Code | settings.json | `~/.config/Code/User/settings.json` |
 | VS Code | keybindings.json | `~/.config/Code/User/keybindings.json` |
+| Zed | settings.json | `~/.config/zed/settings.json` |
+| Zed | keymap.json | `~/.config/zed/keymap.json` |
 | VS Codium | settings.json | `~/.config/VSCodium/User/settings.json` |
 | Atom | config.cson | `~/.atom/config.cson` |
 | Atom | keymap.cson | `~/.atom/keymap.cson` |

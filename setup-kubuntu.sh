@@ -6,7 +6,7 @@
 #
 #  What gets installed:
 #    BASE        : build tools, CLI utils, fonts, multimedia codecs, KDE extras
-#    DEV         : Pulsar (+ claude-chat + git-plus), Python, Ansible, Docker, kubectl,
+#    DEV         : Zed, Python, Ansible, Docker, kubectl,
 #                  Proxmox/infra Python libs, wireshark, man-pages, linux-doc
 #    REMOTE ACCESS: xrdp (RDP server, port 3389) + FreeRDP3 + KRDC (RDP/VNC client)
 #    SYSADMIN    : net-tools, iperf3, socat, mosh, sysstat, iotop-c, iftop, nethogs,
@@ -17,7 +17,10 @@
 #                  Lutris (EA Desktop/Rockstar), MangoHud, GameMode, GOverlay,
 #                  gamescope, vkbasalt, DXVK, vkd3d, input-remapper,
 #                  switcheroo-control, s-tui, ProtonUp-Qt, Flatseal
+#    SOURCEPORTS : build deps for game source ports (SDL2/3, OpenGL, audio
+#                  codecs, libzip, VA/VDPAU, nasm, ninja, miniupnpc, …)
 #    MEDIA       : mpv, VLC
+#    GRAPHICS    : Krita (digital painting + image editing)
 #    INFRA NET   : Tailscale, ZeroTier
 #    VIRT        : virt-manager + QEMU/KVM
 #    GAMING ENV  : shader cache dirs + /etc/environment perf vars
@@ -1595,6 +1598,7 @@ apt-get install -y \
     kde-spectacle \
     okular \
     ark \
+    krita \
     || true
 
 # ── KDE core apps — ensure present (removed by calamares minimal install) ─────
@@ -1623,6 +1627,10 @@ apt-get install -y \
     fonts-inconsolata \
     fonts-cascadia-code \
     || true
+
+info "Installing Google Chrome..."
+apt-get install -y google-chrome-stable \
+    || warn "Google Chrome install failed"
 
 info "Installing Brave Browser (deb-get adds apt repo for auto-updates)..."
 if ! dg_install brave-browser; then
@@ -1835,6 +1843,23 @@ update-initramfs -u 2>/dev/null \
     && ok "Plymouth: theme set to '${_PLYMOUTH_THEME}', initramfs rebuilt" \
     || warn "update-initramfs failed — plymouth change will apply after next kernel update"
 ok "Plymouth boot splash disabled (${_PLYMOUTH_THEME} theme)"
+
+# ── Timeshift: pre-tuning snapshot ────────────────────────────────────────────
+# Taken immediately before the GRUB/kernel-param edits below, which include
+# mitigations=off and thermal.off=1 — a safety net in case the new cmdline
+# leaves the system unbootable or unstable. Non-fatal: a failed snapshot
+# (e.g. unconfigured backend, no space) does not stop the install.
+info "Creating Timeshift snapshot before kernel/GRUB changes (safety net)..."
+if command -v timeshift &>/dev/null; then
+    if timeshift --create --yes --comments "kubuntu-setup: pre-GRUB/kernel tuning" --tags D &>>"$_SLOG"; then
+        ok "Timeshift snapshot created — restore via: sudo timeshift --restore"
+    else
+        warn "Timeshift snapshot failed — continuing without rollback safety net (check timeshift is configured for this filesystem)"
+    fi
+else
+    warn "timeshift not found — skipping pre-tuning snapshot"
+fi
+
 # ── GRUB: performance kernel params ──────────────────────────────────────────
 # Source: github.com/BeanGreen247/ArchLinux-KDE-Plasma-setup-script/tweaks.md
 # Skipped params (incompatible with this setup):
@@ -2091,190 +2116,25 @@ fi
 
 apt-get update -qq 2>&1 | grep -E '^(E:|W:)' || true
 
-# ── Pulsar editor ─────────────────────────────────────────────────────────────
-if ! command -v pulsar &>/dev/null; then
-    _PULSAR_TAG="$(
-        curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: Mozilla/5.0" \
-            https://api.github.com/repos/pulsar-edit/pulsar/releases/latest \
-        | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"])'
-    )"
-    _PULSAR_VER="${_PULSAR_TAG#v}"
-    _PULSAR_URL="https://github.com/pulsar-edit/pulsar/releases/download/${_PULSAR_TAG}/Linux.pulsar_${_PULSAR_VER}_${HOST_ARCH}.deb"
-    _PULSAR_TMP="$(mktemp "/tmp/pulsar_${_PULSAR_VER}_${HOST_ARCH}.XXXXXX.deb")"
-    trap 'rm -f "$_PULSAR_TMP"' EXIT
-    curl -fL "$_PULSAR_URL" -o "$_PULSAR_TMP"
-    dpkg -i "$_PULSAR_TMP" || apt-get -f install -y
-    rm -f "$_PULSAR_TMP"
-    ok "Pulsar ${_PULSAR_VER} installed"
+# ── Remove Pulsar (replaced by Zed) ───────────────────────────────────────────
+if dpkg -l pulsar 2>/dev/null | grep -q '^ii'; then
+    apt-get purge -y pulsar
+    ok "Pulsar package removed"
+fi
+rm -rf "${USER_HOME}/.pulsar"
+rm -f "${USER_HOME}/.local/bin/pulsar"
+rm -f "${USER_HOME}/.local/share/applications/pulsar.desktop"
+
+# ── Zed editor ────────────────────────────────────────────────────────────────
+# Native GPU-accelerated editor (GPUI/Rust, not Electron) — no perf-tuning
+# wrapper or config needed the way Pulsar required. Installs into the user's
+# own ~/.local/ via the official installer, so it runs as the target user.
+if ! sudo -u "$USER_NAME" bash -lc 'command -v zed' &>/dev/null; then
+    sudo -u "$USER_NAME" sh -c 'curl -fsSL https://zed.dev/install.sh | sh'
+    ok "Zed installed"
 else
-    ok "Pulsar already installed"
+    ok "Zed already installed"
 fi
-
-if command -v pulsar &>/dev/null; then
-    # git-plus: command-palette git without any GitHub login prompt
-    sudo -u "$USER_NAME" pulsar -p install git-plus \
-        && ok "  git-plus package installed" \
-        || warn "  git-plus install failed — run: pulsar -p install git-plus"
-    # Disable bundled packages that are unused, dev-only, or hurt performance
-    sudo -u "$USER_NAME" pulsar -p disable \
-        github \
-        open-on-github \
-        metrics \
-        exception-reporting \
-        dev-live-reload \
-        deprecation-cop \
-        autocomplete-atom-api \
-        package-generator \
-        timecop \
-        styleguide \
-        spell-check \
-        welcome \
-        about \
-        background-tips \
-        keybinding-resolver \
-        && ok "  performance/junk packages disabled" \
-        || warn "  some packages could not be disabled — check Settings > Packages"
-fi
-
-# ── Pulsar performance config + launch wrapper ────────────────────────────────
-_PULSAR_CFG="${USER_HOME}/.pulsar/config.cson"
-mkdir -p "${USER_HOME}/.pulsar"
-
-# Write config.cson — preserves disabledPackages and adds performance settings.
-# Pulsar rewrites this file on launch so we only write it if Pulsar isn't running.
-if ! pgrep -u "$USER_NAME" -x pulsar &>/dev/null; then
-    cat > "$_PULSAR_CFG" << 'PULSAR_CFG_EOF'
-"*":
-  core:
-    disabledPackages: [
-      "github"
-      "open-on-github"
-      "dev-live-reload"
-      "deprecation-cop"
-      "autocomplete-atom-api"
-      "package-generator"
-      "timecop"
-      "styleguide"
-      "spell-check"
-      "welcome"
-      "about"
-      "background-tips"
-      "keybinding-resolver"
-    ]
-    excludeVcsIgnoredPaths: true
-    followSymlinks: false
-    ignoredNames: [
-      ".git"
-      "node_modules"
-      "dist"
-      "build"
-      ".next"
-      "venv"
-      ".venv"
-      "__pycache__"
-      "*.pyc"
-      "*.o"
-      "*.a"
-      "target"
-    ]
-  editor:
-    softWrap: false
-    showIndentGuide: false
-    scrollPastEnd: false
-  "autocomplete-plus":
-    minimumWordLength: 3
-    autoActivationDelay: 300
-  "fuzzy-finder":
-    ignoredNames: [
-      "node_modules/**"
-      "dist/**"
-      "build/**"
-      ".git/**"
-      "__pycache__/**"
-      "venv/**"
-      ".venv/**"
-      "target/**"
-    ]
-  autosave:
-    enabled: true
-PULSAR_CFG_EOF
-    chown "$USER_NAME:$USER_NAME" "$_PULSAR_CFG"
-    ok "  Pulsar config.cson written (performance settings)"
-else
-    warn "  Pulsar is running — skipping config.cson write (run setup again after closing Pulsar)"
-fi
-
-# ── Pulsar init.js — auto-reload editors when files change on disk ─────────────
-# Pulsar already silently reloads clean (unsaved) buffers when the file changes
-# on disk.  This init.js snippet also handles the conflict case: if you have
-# unsaved edits AND the file is modified externally, it reverts to disk instead
-# of showing the "file-changed" warning banner.
-_PULSAR_INIT="${USER_HOME}/.pulsar/init.js"
-if ! pgrep -u "$USER_NAME" -x pulsar &>/dev/null; then
-    cat > "$_PULSAR_INIT" << 'PULSAR_INIT_EOF'
-// Auto-reload any open editor when the underlying file changes on disk.
-// Handles both the clean case (Pulsar does this built-in) and the conflict
-// case (unsaved edits + external change) by reverting to the disk version.
-atom.workspace.observeTextEditors(function (editor) {
-  editor.getBuffer().onDidConflict(function () {
-    editor.getBuffer().revert();
-  });
-});
-PULSAR_INIT_EOF
-    chown "$USER_NAME:$USER_NAME" "$_PULSAR_INIT"
-    ok "  Pulsar init.js written (auto-reload on external file change)"
-else
-    warn "  Pulsar is running — skipping init.js write (run setup again after closing Pulsar)"
-fi
-
-# Wrapper script: injects Electron/V8 performance flags without touching the
-# system /usr/bin/pulsar (which gets overwritten on package upgrades).
-_PULSAR_WRAPPER="${USER_HOME}/.local/bin/pulsar"
-mkdir -p "${USER_HOME}/.local/bin"
-cat > "$_PULSAR_WRAPPER" << 'PULSAR_WRAP_EOF'
-#!/usr/bin/env bash
-# Wrapper to launch Pulsar with performance-tuned Electron/V8 flags.
-# Calls the real /usr/bin/pulsar (the system script) so updates don't break this.
-export UV_THREADPOOL_SIZE="$(nproc)"
-export NODE_ENV=production
-exec /usr/bin/pulsar \
-    --js-flags="--max-old-space-size=8192 --turbo-fast-api-calls" \
-    --disable-renderer-backgrounding \
-    --disable-backgrounding-occluded-windows \
-    --enable-features=UseOzonePlatform,WaylandWindowDecorations,VaapiVideoDecoder,CanvasOopRasterization \
-    --disable-features=TranslateUI,AutofillServerCommunication \
-    --ozone-platform=wayland \
-    --ignore-gpu-blocklist \
-    --enable-gpu-rasterization \
-    --enable-zero-copy \
-    --enable-native-gpu-memory-buffers \
-    --num-raster-threads="$(nproc)" \
-    "$@"
-PULSAR_WRAP_EOF
-chmod +x "$_PULSAR_WRAPPER"
-chown "$USER_NAME:$USER_NAME" "$_PULSAR_WRAPPER"
-ok "  Pulsar launch wrapper written (${_PULSAR_WRAPPER})"
-
-# User-level .desktop file: overrides /usr/share/applications/pulsar.desktop so
-# the KDE app launcher also goes through our wrapper. Survives Pulsar updates.
-_PULSAR_DESKTOP="${USER_HOME}/.local/share/applications/pulsar.desktop"
-mkdir -p "${USER_HOME}/.local/share/applications"
-cat > "$_PULSAR_DESKTOP" << PULSAR_DESKTOP_EOF
-[Desktop Entry]
-Name=Pulsar
-Exec=${USER_HOME}/.local/bin/pulsar %U
-Terminal=false
-Type=Application
-Icon=pulsar
-StartupWMClass=Pulsar
-Comment=A Community-led Hyper-Hackable Text Editor
-Categories=Development;
-PULSAR_DESKTOP_EOF
-chown "$USER_NAME:$USER_NAME" "$_PULSAR_DESKTOP"
-sudo -u "$USER_NAME" update-desktop-database "${USER_HOME}/.local/share/applications/" 2>/dev/null || true
-ok "  Pulsar .desktop override written (app launcher now uses wrapper)"
 
 if ! command -v docker &>/dev/null; then
     apt-get install -y \
@@ -2387,6 +2247,7 @@ apt-get install -y \
     lvm2 \
     cryptsetup \
     gparted \
+    gnome-disk-utility \
     xfsprogs \
     btrfs-progs \
     || true
@@ -2723,6 +2584,102 @@ apt-get install -y \
     linux-doc glibc-doc
 usermod -aG wireshark "$USER_NAME"
 ok "Wireshark + man-pages + linux-doc installed"
+
+# ── Wine + winetricks — cross-compilation prerequisite (all profiles except dotfiles) ──
+
+info "Setting up WineHQ repository (${UBUNTU_CODENAME})..."
+
+install -m 0755 -d /etc/apt/keyrings
+if [[ ! -f /etc/apt/keyrings/winehq-archive.key ]]; then
+    if wget -qO- https://dl.winehq.org/wine-builds/winehq.key \
+        | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key; then
+        ok "WineHQ signing key saved"
+    else
+        warn "Failed to download WineHQ signing key — wine installation will likely fail"
+    fi
+fi
+
+WINEHQ_SOURCES_URL="https://dl.winehq.org/wine-builds/ubuntu/dists/${UBUNTU_CODENAME}/winehq-${UBUNTU_CODENAME}.sources"
+WINEHQ_SOURCES_FILE="/etc/apt/sources.list.d/winehq-${UBUNTU_CODENAME}.sources"
+if curl -fsLm 15 -o /dev/null "${WINEHQ_SOURCES_URL}" 2>/dev/null; then
+    info "WineHQ carries packages for '${UBUNTU_CODENAME}' — adding sources file..."
+    if [[ ! -f "$WINEHQ_SOURCES_FILE" ]]; then
+        wget -qO "$WINEHQ_SOURCES_FILE" "${WINEHQ_SOURCES_URL}"
+    fi
+    apt-get update -qq 2>&1 | grep -E '^(E:|W:)' || true
+    apt-get install -y --install-recommends winehq-staging \
+        && ok "winehq-staging installed (WoW64-capable on 25.10+)" \
+        || {
+            warn "winehq-staging failed; trying ubuntu wine..."
+            apt-get install -y wine || true
+        }
+else
+    warn "WineHQ does not yet publish packages for '${UBUNTU_CODENAME}' — using Ubuntu wine"
+    apt-get install -y wine || true
+fi
+
+info "Installing winetricks (latest)..."
+wget -q https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks \
+    -O /usr/local/bin/winetricks
+chmod +x /usr/local/bin/winetricks
+ok "winetricks installed"
+
+info "Installing Wine/Proton runtime libraries..."
+# Ubuntu 25.04+ uses t64-suffixed lib names (64-bit time_t ABI transition).
+# Try the t64 name first; fall back to the legacy name for older Ubuntu releases.
+_t64_pkg() {
+    local base=$1 arch=${2:-}
+    local suffix=${arch:+:${arch}}
+    if apt-cache show "${base}t64${suffix}" &>/dev/null 2>&1; then
+        echo "${base}t64${suffix}"
+    else
+        echo "${base}${suffix}"
+    fi
+}
+apt-get install -y \
+    "$(_t64_pkg libgnutls30 i386)" \
+    libgpg-error0:i386 \
+    "$(_t64_pkg libxml2 i386)" \
+    libsdl2-2.0-0:i386 \
+    libfreetype6:i386 \
+    libdbus-1-3:i386 \
+    libsqlite3-0:i386 \
+    libvulkan1:i386 \
+    mesa-vulkan-drivers:i386 \
+    libgl1:i386 \
+    libgl1-mesa-dri:i386 \
+    libopenal1:i386 libopenal1 \
+    libpulse0:i386 libpulse0 \
+    libfontconfig1:i386 \
+    libxcomposite1:i386 libxcursor1:i386 libxi6:i386 \
+    libxrandr2:i386 libxinerama1:i386 \
+    "$(_t64_pkg libglib2.0-0 i386)" \
+    libasound2-plugins:i386 \
+    || warn "Some 32-bit Wine libs failed (usually non-fatal with winehq-staging)"
+unset -f _t64_pkg
+# winbind provides ntlm_auth ≥ 3.0.25 which Wine requires for NTLM/Kerberos
+# authentication used by Battle.net-style launchers and custom WoW launchers.
+# libgssapi-krb5-2 / libkrb5-3 are pulled in by winbind but listed explicitly
+# to ensure they're present even if the winbind package name changes.
+apt-get install -y \
+    winbind \
+    libgssapi-krb5-2 \
+    libkrb5-3 \
+    || warn "winbind/Kerberos install failed — Battle.net-style launchers may have auth issues"
+ok "Wine runtime libraries installed (+ winbind NTLM auth)"
+
+# Export WINE path to the user's login profile so node/npm tools (e.g. electron-builder)
+# can locate wine for Windows cross-compilation without extra configuration.
+_PROFILE_FILE="${USER_HOME}/.profile"
+[[ ! -f "$_PROFILE_FILE" ]] && touch "$_PROFILE_FILE" && chown "${USER_NAME}:${USER_NAME}" "$_PROFILE_FILE"
+if ! grep -qxF '[ -x /usr/bin/wine ] && export WINE=/usr/bin/wine' "$_PROFILE_FILE"; then
+    echo '[ -x /usr/bin/wine ] && export WINE=/usr/bin/wine' >> "$_PROFILE_FILE"
+    ok "WINE export guard added to ${_PROFILE_FILE}"
+else
+    ok "WINE export already in ${_PROFILE_FILE}"
+fi
+unset _PROFILE_FILE
+
 fi  # ─── end: 4/15 ───
 
 hdr "5/15  Remote desktop access"
@@ -3142,88 +3099,10 @@ done < <(blkid -t TYPE=ntfs -o device 2>/dev/null)
 [[ "$_NTFS_COUNT" -eq 0 ]] && warn "No NTFS partitions detected — ntfs-3g installed; add fstab entries manually if needed"
 fi  # ─── end: 8/15 ───
 
-hdr "9/15  Gaming — Wine, Steam, launchers"
+hdr "9/15  Gaming — Steam, launchers"
 if (( _SKIP_GAMING || _DOTFILES_ONLY )); then
     info "9/15 skipped  (profile: ${INSTALL_PROFILE})"
 else
-
-info "Setting up WineHQ repository (${UBUNTU_CODENAME})..."
-
-install -m 0755 -d /etc/apt/keyrings
-if [[ ! -f /etc/apt/keyrings/winehq-archive.key ]]; then
-    wget -qO- https://dl.winehq.org/wine-builds/winehq.key \
-        | gpg --batch --yes --dearmor -o /etc/apt/keyrings/winehq-archive.key
-    ok "WineHQ signing key saved"
-fi
-
-WINEHQ_SOURCES_URL="https://dl.winehq.org/wine-builds/ubuntu/dists/${UBUNTU_CODENAME}/winehq-${UBUNTU_CODENAME}.sources"
-WINEHQ_SOURCES_FILE="/etc/apt/sources.list.d/winehq-${UBUNTU_CODENAME}.sources"
-if curl -fsLm 15 -o /dev/null "${WINEHQ_SOURCES_URL}" 2>/dev/null; then
-    info "WineHQ carries packages for '${UBUNTU_CODENAME}' — adding sources file..."
-    if [[ ! -f "$WINEHQ_SOURCES_FILE" ]]; then
-        wget -qO "$WINEHQ_SOURCES_FILE" "${WINEHQ_SOURCES_URL}"
-    fi
-    apt-get update -qq 2>&1 | grep -E '^(E:|W:)' || true
-    apt-get install -y --install-recommends winehq-staging \
-        && ok "winehq-staging installed (WoW64-capable on 25.10+)" \
-        || {
-            warn "winehq-staging failed; trying ubuntu wine..."
-            apt-get install -y wine || true
-        }
-else
-    warn "WineHQ does not yet publish packages for '${UBUNTU_CODENAME}' — using Ubuntu wine"
-    apt-get install -y wine || true
-fi
-
-info "Installing winetricks (latest)..."
-wget -q https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks \
-    -O /usr/local/bin/winetricks
-chmod +x /usr/local/bin/winetricks
-ok "winetricks installed"
-
-info "Installing Wine/Proton runtime libraries..."
-# Ubuntu 25.04+ uses t64-suffixed lib names (64-bit time_t ABI transition).
-# Try the t64 name first; fall back to the legacy name for older Ubuntu releases.
-_t64_pkg() {
-    local base=$1 arch=${2:-}
-    local suffix=${arch:+:${arch}}
-    if apt-cache show "${base}t64${suffix}" &>/dev/null 2>&1; then
-        echo "${base}t64${suffix}"
-    else
-        echo "${base}${suffix}"
-    fi
-}
-apt-get install -y \
-    "$(_t64_pkg libgnutls30 i386)" \
-    libgpg-error0:i386 \
-    "$(_t64_pkg libxml2 i386)" \
-    libsdl2-2.0-0:i386 \
-    libfreetype6:i386 \
-    libdbus-1-3:i386 \
-    libsqlite3-0:i386 \
-    libvulkan1:i386 \
-    mesa-vulkan-drivers:i386 \
-    libgl1:i386 \
-    libgl1-mesa-dri:i386 \
-    libopenal1:i386 libopenal1 \
-    libpulse0:i386 libpulse0 \
-    libfontconfig1:i386 \
-    libxcomposite1:i386 libxcursor1:i386 libxi6:i386 \
-    libxrandr2:i386 libxinerama1:i386 \
-    "$(_t64_pkg libglib2.0-0 i386)" \
-    libasound2-plugins:i386 \
-    || warn "Some 32-bit Wine libs failed (usually non-fatal with winehq-staging)"
-unset -f _t64_pkg
-# winbind provides ntlm_auth ≥ 3.0.25 which Wine requires for NTLM/Kerberos
-# authentication used by Battle.net-style launchers and custom WoW launchers.
-# libgssapi-krb5-2 / libkrb5-3 are pulled in by winbind but listed explicitly
-# to ensure they're present even if the winbind package name changes.
-apt-get install -y \
-    winbind \
-    libgssapi-krb5-2 \
-    libkrb5-3 \
-    || warn "winbind/Kerberos install failed — Battle.net-style launchers may have auth issues"
-ok "Wine runtime libraries installed (+ winbind NTLM auth)"
 
 info "Installing Steam..."
 apt-get install -y steam-installer 2>/dev/null \
@@ -3852,6 +3731,41 @@ apt-get install -y \
     libdecor-0-plugin-1-cairo \
     2>/dev/null || true
 ok "Wayland support: xwayland + xdg-desktop-portal-kde + libdecor installed"
+
+# ── Source port build dependencies ───────────────────────────────────────────
+# Libraries and tools needed to compile game source ports (GZDoom, Chocolate
+# Doom, Quakespasm, ECWolf, etc.) from source on Linux.
+info "Installing game source port build dependencies..."
+apt-get install -y \
+    nasm \
+    ninja-build \
+    openssl \
+    libsdl2-dev \
+    libsdl2-image-2.0-0 \
+    libsdl2-mixer-2.0-0 \
+    libsdl2-mixer-dev \
+    libsdl3-0 \
+    libgl1-mesa-dev \
+    libavcodec-dev \
+    libcurl4-openssl-dev \
+    libalut-dev \
+    libjpeg62 \
+    flac \
+    libflac-dev \
+    libvpx-dev \
+    libgtk2.0-dev \
+    freepats \
+    libsndfile1-dev \
+    libao-dev \
+    miniupnpc \
+    vainfo \
+    vdpauinfo \
+    libzip-dev \
+    zipcmp \
+    zipmerge \
+    ziptool \
+    2>/dev/null || warn "Some source port build deps unavailable — non-fatal"
+ok "Source port build dependencies installed (SDL2/3, OpenGL, audio, codecs, zip, VA/VDPAU)"
 fi  # ─── end: 9/15 ───
 
 hdr "10/15  Networking — Tailscale + ZeroTier"
@@ -5202,6 +5116,51 @@ systemctl enable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 
 ok "Cleanup complete"
 
+# ── Post-install verification ─────────────────────────────────────────────────
+# A clean apt log doesn't guarantee a working system — check that GPU drivers
+# actually resolved, group membership took effect, and key services/firewall/
+# swap came up. Each check is independent and non-fatal; results flow into the
+# existing ok/warn counters via _print_summary.
+info "Running post-install verification..."
+
+if [[ "$GPU_TYPE" != "none" && "$GPU_TYPE" != "vm" ]] && command -v vainfo &>/dev/null; then
+    if vainfo 2>&1 | grep -q "Driver version"; then
+        ok "VA-API driver resolved ($(vainfo 2>&1 | grep -m1 'Driver version'))"
+    else
+        warn "VA-API driver did not resolve — check LIBVA_DRIVER_NAME in /etc/environment and reboot"
+    fi
+fi
+
+if [[ "$GPU_TYPE" != "none" ]]; then
+    _verify_groups="$(id -nG "$USER_NAME" 2>/dev/null)"
+    for _verify_g in video render; do
+        grep -qw "$_verify_g" <<< "$_verify_groups" && ok "User '$USER_NAME' is in '$_verify_g' group" \
+            || warn "User '$USER_NAME' NOT in '$_verify_g' group yet — takes effect after next login/reboot"
+    done
+fi
+
+declare -A _verify_svcs=( [docker]=1 )
+(( _SKIP_INFRA )) || _verify_svcs+=( [xrdp]=1 [libvirtd]=1 [tailscaled]=1 [zerotier-one]=1 )
+for _verify_svc in "${!_verify_svcs[@]}"; do
+    if systemctl is-enabled --quiet "$_verify_svc" 2>/dev/null; then
+        systemctl is-active --quiet "$_verify_svc" 2>/dev/null \
+            && ok "$_verify_svc active" \
+            || warn "$_verify_svc enabled but not active — check: systemctl status $_verify_svc"
+    fi
+done
+
+ufw status 2>/dev/null | grep -q "Status: active" \
+    && ok "UFW firewall active" \
+    || warn "UFW is not active — check: sudo ufw status"
+
+systemctl is-active --quiet fail2ban 2>/dev/null \
+    && ok "fail2ban active" \
+    || warn "fail2ban not active — check: systemctl status fail2ban"
+
+swapon --show 2>/dev/null | grep -q zram \
+    && ok "zram swap active" \
+    || warn "zram swap not detected in swapon --show"
+
 if [[ -d "$GE_CACHE" ]] && [[ -n "$(ls -A "$GE_CACHE" 2>/dev/null)" ]]; then
     echo ""
     _GE_SIZE=$(du -sh "$GE_CACHE" 2>/dev/null | cut -f1)
@@ -5231,8 +5190,9 @@ echo -e "${GREEN}  ✓${NC}  deb-get (third-party package manager — auto-updat
 echo -e "${GREEN}  ✓${NC}  System updated — i386 multiarch + universe/multiverse enabled"
 echo -e "${GREEN}  ✓${NC}  Multimedia codecs (ffmpeg, gstreamer, ubuntu-restricted-extras)"
 echo -e "${GREEN}  ✓${NC}  KDE extras + comprehensive font collection"
-echo -e "${GREEN}  ✓${NC}  Brave Browser (auto-updates via apt)"
-echo -e "${GREEN}  ✓${NC}  Pulsar (claude-chat + git-plus) + Docker CE + Ansible + kubectl + Azure CLI"
+echo -e "${GREEN}  ✓${NC}  Krita (digital painting + image editing)"
+echo -e "${GREEN}  ✓${NC}  Google Chrome + Brave Browser (auto-updates via apt)"
+echo -e "${GREEN}  ✓${NC}  Zed + Docker CE + Ansible + kubectl + Azure CLI"
 echo -e "${GREEN}  ✓${NC}  Python infra packages: proxmoxer, netmiko, napalm, pynetbox"
 echo -e "${GREEN}  ✓${NC}  Wireshark + man-pages (POSIX) + linux-doc"
 echo -e "${GREEN}  ✓${NC}  xrdp  (RDP server, port 3389)"
@@ -5241,12 +5201,12 @@ echo -e "${GREEN}  ✓${NC}  Extended networking: net-tools, iperf3, socat, arp-
 echo -e "${GREEN}  ✓${NC}  LLVM toolchain: clang, lldb, meson, ninja, valgrind, shellcheck"
 echo -e "${GREEN}  ✓${NC}  Modern CLI: pv, moreutils, parallel, entr, ncdu, duf, zoxide, httpie, aria2"
 echo -e "${GREEN}  ✓${NC}  Observability: sysstat (sar/iostat), iotop-c, iftop, nethogs, perf, stress-ng, powertop"
-echo -e "${GREEN}  ✓${NC}  Disk + storage: smartmontools, nvme-cli, hdparm, lvm2, cryptsetup, gparted, xfs/btrfs"
+echo -e "${GREEN}  ✓${NC}  Disk + storage: smartmontools, nvme-cli, hdparm, lvm2, cryptsetup, gparted, gnome-disk-utility, xfs/btrfs"
 echo -e "${GREEN}  ✓${NC}  Security: UFW enabled (default-deny; SSH open; RDP restricted to VPN subnets), fail2ban (sshd + xrdp jails, 2 h ban), lynis, clamav (on-demand; clamd masked), age"
 echo -e "${GREEN}  ✓${NC}  Rootless containers: Podman + buildah + skopeo"
 echo -e "${GREEN}  ✓${NC}  GPU: ${GPU_TYPE}$([ "$GPU_TYPE" = vm ] && echo '  (virtio-gpu/SPICE + Mesa virgl + qemu-guest-agent)' || echo '  (no drivers installed — see gpu-setup-commands.txt)')"
 echo -e "${GREEN}  ✓${NC}  NTFS support (ntfs3 in-kernel driver + ntfs-3g fallback + exFAT)"
-echo -e "${GREEN}  ✓${NC}  Wine staging (WineHQ, WoW64) + winetricks + 32/64-bit runtime libs"
+echo -e "${GREEN}  ✓${NC}  Wine staging (WineHQ, WoW64) + winetricks + 32/64-bit runtime libs  [all full* profiles]"
 echo -e "${GREEN}  ✓${NC}  Proton-GE (Steam compat tools) + Wine-GE (Heroic + Lutris runners)"
 echo -e "${GREEN}  ✓${NC}  Post-login autostart: Wine prefix init + KWin script + KDE power/perf tuning (runs automatically on first login)"
 echo -e "${GREEN}  ✓${NC}  Steam"
