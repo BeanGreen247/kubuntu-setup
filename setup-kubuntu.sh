@@ -2136,6 +2136,24 @@ else
     ok "Zed already installed"
 fi
 
+# ── Obsidian ────────────────────────────────────────────────────────────────
+info "Installing Obsidian (deb-get adds apt repo for auto-updates)..."
+if ! dg_install obsidian; then
+    warn "deb-get obsidian failed — falling back to direct .deb download"
+    OBSIDIAN_URL=$(curl -sLm 30 \
+        https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
+        | grep '"browser_download_url"' | grep '_amd64\.deb"' | head -1 | cut -d '"' -f 4)
+    if [[ -n "$OBSIDIAN_URL" ]]; then
+        wget -q "$OBSIDIAN_URL" -O /tmp/obsidian.deb
+        apt-get install -y /tmp/obsidian.deb || warn "Obsidian install failed"
+        rm -f /tmp/obsidian.deb
+    else
+        warn "Could not resolve Obsidian download URL"
+    fi
+else
+    ok "Obsidian installed"
+fi
+
 if ! command -v docker &>/dev/null; then
     apt-get install -y \
         docker-ce docker-ce-cli containerd.io \
@@ -5193,6 +5211,7 @@ echo -e "${GREEN}  ✓${NC}  KDE extras + comprehensive font collection"
 echo -e "${GREEN}  ✓${NC}  Krita (digital painting + image editing)"
 echo -e "${GREEN}  ✓${NC}  Google Chrome + Brave Browser (auto-updates via apt)"
 echo -e "${GREEN}  ✓${NC}  Zed + Docker CE + Ansible + kubectl + Azure CLI"
+echo -e "${GREEN}  ✓${NC}  Obsidian (via deb-get)"
 echo -e "${GREEN}  ✓${NC}  Python infra packages: proxmoxer, netmiko, napalm, pynetbox"
 echo -e "${GREEN}  ✓${NC}  Wireshark + man-pages (POSIX) + linux-doc"
 echo -e "${GREEN}  ✓${NC}  xrdp  (RDP server, port 3389)"
